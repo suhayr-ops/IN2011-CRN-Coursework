@@ -70,7 +70,7 @@ class LocalTest {
 	    // Now we can test some of the functionality of node[0]
 
 	    // We need some test text. This may be familiar.
-	    ArrayList<String> lines = new ArrayList<String>();
+	    ArrayList<String> lines = new ArrayList<>();
 	    lines.add("O Romeo, Romeo! wherefore art thou Romeo?");
 	    lines.add("Deny thy father and refuse thy name;");
 	    lines.add("Or, if thou wilt not, be but sworn my love,");
@@ -122,12 +122,43 @@ class LocalTest {
 	    if (successfulTests == 2*lines.size()) {
 		System.out.println("All tests worked -- that's a good start!");
 	    }
-	    
+		// --- Relay test using existing node ---
+
+		System.out.println("\n=== RELAY TEST ===");
+
+		// normal write
+		System.out.println("Normal write:");
+		nodes[0].write("D:test", "hello");
+
+		// relay write
+		System.out.println("Relay write:");
+		nodes[0].pushRelay("N:test1");
+		boolean ok = nodes[0].write("D:test2", "world");
+		nodes[0].popRelay();
+
+		System.out.println("Relay write result: " + ok);
+
+		// read back
+		System.out.println("Relay read:");
+		nodes[0].pushRelay("N:test1");
+		String val = nodes[0].read("D:test2");
+		nodes[0].popRelay();
+
+		System.out.println("Relay read value: " + val);
+
+		System.out.println("Value: " + val);
+
+		System.out.println("\n=== isActive TEST ===");
+
+		boolean active = nodes[0].isActive("N:test0");
+		System.out.println("Is N:test0 active? " + active);
+
 	} catch (Exception e) {
 	    System.err.println("Exception during localTest");
 	    e.printStackTrace(System.err);
 	    return;
 	}
+
     }
 
     // This sends gives each node some initial address key/value pairs

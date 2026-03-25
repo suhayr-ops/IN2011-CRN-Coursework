@@ -92,6 +92,8 @@ public class Node implements NodeInterface {
     private HashMap<String, String> store = new HashMap<>();
     private HashMap<String, String> recentResponses = new HashMap<>();
     private final HashMap<String, String> pendingResponses = new HashMap<>();
+    private java.util.Stack<String> relayStack = new java.util.Stack<>();
+
 
     public void putLocal(String key, String value) {
         store.put(key, value);
@@ -110,7 +112,62 @@ public class Node implements NodeInterface {
 
 
     private String sendRequest(String message) throws Exception {
-        return handleMessage(message);
+        String finalMessage = message;
+
+        // wrap with relay layers
+        for (int i = relayStack.size() - 1; i >= 0; i--) {
+            String relayNode = relayStack.get(i);
+            String encodedNode = CRNUtils.encodeString(relayNode);
+            finalMessage = finalMessage.substring(0, 2) + " V " + encodedNode + finalMessage.substring(3);
+        }
+
+        String txid = finalMessage.substring(0, 2);
+
+        synchronized (pendingResponses) {
+            pendingResponses.put(txid, null);
+        }
+
+        byte[] data = finalMessage.getBytes();
+
+        DatagramPacket packet = new DatagramPacket(
+                data,
+                data.length,
+                java.net.InetAddress.getLocalHost(), // local for now
+                socket.getLocalPort()
+        );
+
+        int attempts = 0;
+
+        while (attempts < 3) {
+            socket.send(packet);
+
+            long start = System.currentTimeMillis();
+
+            while (System.currentTimeMillis() - start < 5000) {
+                String response;
+
+                synchronized (pendingResponses) {
+                    response = pendingResponses.get(txid);
+                }
+
+                if (response != null) {
+                    synchronized (pendingResponses) {
+                        pendingResponses.remove(txid);
+                    }
+                    return response;
+                }
+
+                Thread.sleep(10);
+            }
+
+            attempts++;
+        }
+
+        synchronized (pendingResponses) {
+            pendingResponses.remove(txid);
+        }
+
+        return null;
     }
 
     @Override
@@ -207,7 +264,37 @@ public class Node implements NodeInterface {
             String txid = parts[0];
             String type = parts[1];
 
+            System.out.println("Node " + nodeName + " received: " + message);
 
+            if (type.equals("V")) {
+                String rest = parts[2];
+
+                int firstSpace = rest.indexOf(' ');
+                int spaceCount = Integer.parseInt(rest.substring(0, firstSpace));
+
+                int index = firstSpace + 1;
+                int spacesSeen = 0;
+
+                while (spacesSeen <= spaceCount && index < rest.length()) {
+                    if (rest.charAt(index) == ' ') {
+                        spacesSeen++;
+                    }
+                    index++;
+                }
+
+                String encodedNode = rest.substring(0, index);
+                String embeddedMessage = rest.substring(index);
+
+                // simulate relay locally
+                String response = handleMessage(txid + " " + embeddedMessage);
+
+                if (response == null) return null;
+
+                // preserve TXID properly
+                String newResponse = txid + response.substring(2);
+
+                return respond(txid, newResponse);
+            }
             // G → Name
             if (type.equals("G")) {
                 String encodedName = CRNUtils.encodeString(this.nodeName);
@@ -277,6 +364,55 @@ public class Node implements NodeInterface {
                     return respond(txid, txid + " X A ");
                 }
             }
+            if (type.equals("C")) {
+                String rest = parts[2];
+
+                // --- extract key ---
+                int firstSpace = rest.indexOf(' ');
+                int spaceCount1 = Integer.parseInt(rest.substring(0, firstSpace));
+
+                int index = firstSpace + 1;
+                int spacesSeen = 0;
+
+                while (spacesSeen <= spaceCount1 && index < rest.length()) {
+                    if (rest.charAt(index) == ' ') {
+                        spacesSeen++;
+                    }
+                    index++;
+                }
+
+                String encodedKey = rest.substring(0, index);
+                String remaining1 = rest.substring(index);
+
+                // --- extract currentValue ---
+                int firstSpace2 = remaining1.indexOf(' ');
+                int spaceCount2 = Integer.parseInt(remaining1.substring(0, firstSpace2));
+
+                int index2 = firstSpace2 + 1;
+                int spacesSeen2 = 0;
+
+                while (spacesSeen2 <= spaceCount2 && index2 < remaining1.length()) {
+                    if (remaining1.charAt(index2) == ' ') {
+                        spacesSeen2++;
+                    }
+                    index2++;
+                }
+
+                String encodedCurrent = remaining1.substring(0, index2);
+                String encodedNew = remaining1.substring(index2);
+
+                String key = CRNUtils.decodeString(encodedKey);
+                String currentValue = CRNUtils.decodeString(encodedCurrent);
+                String newValue = CRNUtils.decodeString(encodedNew);
+
+                if (store.containsKey(key) && store.get(key).equals(currentValue)) {
+                    store.put(key, newValue);
+                    return respond(txid, txid + " D Y ");
+                } else {
+                    return respond(txid, txid + " D N ");
+                }
+            }
+
 
             return null;
 
@@ -285,18 +421,35 @@ public class Node implements NodeInterface {
         }
     }
 
-
-    
+    @Override
     public boolean isActive(String nodeName) throws Exception {
-	throw new Exception("Not implemented");
-    }
-    
-    public void pushRelay(String nodeName) throws Exception {
-	throw new Exception("Not implemented");
+
+        String txid = nextTxID();
+
+        String request = txid + " G";
+
+        String response = sendRequest(request);
+
+        if (response == null) return false;
+
+        // Check it's a name response
+        if (!response.contains(" H ")) return false;
+
+        // Extract returned name
+        String encodedName = response.substring(response.indexOf(" H ") + 3);
+        String returnedName = CRNUtils.decodeString(encodedName);
+
+        return returnedName.equals(nodeName);
     }
 
-    public void popRelay() throws Exception {
-        throw new Exception("Not implemented");
+    public void pushRelay(String nodeName) {
+        relayStack.push(nodeName);
+    }
+
+    public void popRelay() {
+        if (!relayStack.isEmpty()) {
+            relayStack.pop();
+        }
     }
 
     @Override
@@ -353,6 +506,16 @@ public class Node implements NodeInterface {
     }
 
     public boolean CAS(String key, String currentValue, String newValue) throws Exception {
-	throw new Exception("Not implemented");
+        String txid = nextTxID();
+
+        String encodedKey = CRNUtils.encodeString(key);
+        String encodedCurrent = CRNUtils.encodeString(currentValue);
+        String encodedNew = CRNUtils.encodeString(newValue);
+
+        String request = txid + " C " + encodedKey + encodedCurrent + encodedNew;
+
+        String response = sendRequest(request);
+
+        return response != null && response.contains(" D Y ");
     }
 }
