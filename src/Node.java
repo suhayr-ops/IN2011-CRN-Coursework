@@ -2,15 +2,19 @@
 // Coursework 2024/2025
 //
 // Submission by
-//  YOUR_NAME_GOES_HERE
+//  Suhayr Mohamud
 //  YOUR_STUDENT_ID_NUMBER_GOES_HERE
-//  YOUR_EMAIL_GOES_HERE
+//  suhayr.mohamud@city.ac.uk
 
 
 // DO NOT EDIT starts
 // This gives the interface that your code must implement.
 // These descriptions are intended to help you understand how the interface
 // will be used. See the RFC for how the protocol works.
+
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.util.HashMap;
 
 interface NodeInterface {
 
@@ -81,18 +85,207 @@ interface NodeInterface {
 
 // Complete this!
 public class Node implements NodeInterface {
+    private String nodeName;
+    private byte[] nodeHash;
+    private DatagramSocket socket;
 
+    private HashMap<String, String> store = new HashMap<>();
+    private HashMap<String, String> recentResponses = new HashMap<>();
+    private final HashMap<String, String> pendingResponses = new HashMap<>();
+
+    public void putLocal(String key, String value) {
+        store.put(key, value);
+    }
+
+    private int txCounter = 0;
+
+    private synchronized String nextTxID() {
+        txCounter++;
+
+        char c1 = (char) ('A' + (txCounter / 26) % 26);
+        char c2 = (char) ('A' + txCounter % 26);
+
+        return "" + c1 + c2;
+    }
+
+
+    private String sendRequest(String message) throws Exception {
+        return handleMessage(message);
+    }
+
+    @Override
     public void setNodeName(String nodeName) throws Exception {
-	throw new Exception("Not implemented");
+        this.nodeName = nodeName;
+        this.nodeHash = HashID.computeHashID(nodeName);
     }
 
+    @Override
     public void openPort(int portNumber) throws Exception {
-	throw new Exception("Not implemented");
+        this.socket = new DatagramSocket(portNumber);
+
+        Thread listener = new Thread(() -> {
+            try {
+                handleIncomingMessages(0);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+
+        listener.setDaemon(true);
+        listener.start();
     }
 
-    public void handleIncomingMessages(int delay) throws Exception {
-	throw new Exception("Not implemented");
+    private String respond(String txid, String response) {
+        return response;
     }
+
+    @Override
+    public void handleIncomingMessages(int delay) throws Exception {
+        byte[] buffer = new byte[65535];
+
+        if (delay > 0) {
+            socket.setSoTimeout(delay);
+        } else {
+            socket.setSoTimeout(0);
+        }
+
+        while (true) {
+            DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
+
+            try {
+                socket.receive(packet);
+            } catch (java.net.SocketTimeoutException e) {
+                return;
+            }
+
+            String message = new String(packet.getData(), 0, packet.getLength());
+
+            if (message.length() < 3) {
+                continue;
+            }
+
+            String[] parts = message.split(" ", 3);
+            if (parts.length < 2) {
+                continue;
+            }
+
+            String txid = parts[0];
+            String type = parts[1];
+
+            boolean isResponseType =
+                    type.equals("H") || type.equals("O") || type.equals("F") ||
+                            type.equals("S") || type.equals("X") || type.equals("D");
+
+            synchronized (pendingResponses) {
+                if (isResponseType && pendingResponses.containsKey(txid)) {
+                    pendingResponses.put(txid, message);
+                    continue;
+                }
+            }
+
+            String response = handleMessage(message);
+
+            if (response != null) {
+                byte[] responseBytes = response.getBytes();
+
+                DatagramPacket reply = new DatagramPacket(
+                        responseBytes,
+                        responseBytes.length,
+                        packet.getAddress(),
+                        packet.getPort()
+                );
+
+                socket.send(reply);
+            }
+        }
+    }
+    public String handleMessage(String message) {
+        try {
+
+            String[] parts = message.split(" ", 3);
+
+            String txid = parts[0];
+            String type = parts[1];
+
+
+            // G → Name
+            if (type.equals("G")) {
+                String encodedName = CRNUtils.encodeString(this.nodeName);
+                return respond(txid, txid + " H " + encodedName);
+            }
+
+            // N → Nearest
+            if (type.equals("N")) {
+                String encodedName = CRNUtils.encodeString(this.nodeName);
+                return respond(txid, txid + " O " + encodedName);
+            }
+
+            // E → Exists
+            if (type.equals("E")) {
+                String encodedKey = parts[2];
+                String key = CRNUtils.decodeString(encodedKey);
+
+                if (store.containsKey(key)) {
+                    return respond(txid, txid + " F Y ");
+                } else {
+                    return respond(txid, txid + " F N ");
+                }
+            }
+
+            // R → Read
+            if (type.equals("R")) {
+                String encodedKey = parts[2];
+                String key = CRNUtils.decodeString(encodedKey);
+
+                if (store.containsKey(key)) {
+                    String value = store.get(key);
+                    String encodedValue = CRNUtils.encodeString(value);
+                    return respond(txid, txid + " S Y " + encodedValue);
+                } else {
+                    return respond(txid, txid + " S N ");
+                }
+            }
+
+            // W → Write
+            if (type.equals("W")) {
+                String rest = parts[2];
+
+                int firstSpace = rest.indexOf(' ');
+                int spaceCount = Integer.parseInt(rest.substring(0, firstSpace));
+
+                int index = firstSpace + 1;
+                int spacesSeen = 0;
+
+                while (spacesSeen <= spaceCount && index < rest.length()) {
+                    if (rest.charAt(index) == ' ') {
+                        spacesSeen++;
+                    }
+                    index++;
+                }
+
+                String encodedKey = rest.substring(0, index);
+                String encodedValue = rest.substring(index);
+
+                String key = CRNUtils.decodeString(encodedKey);
+                String value = CRNUtils.decodeString(encodedValue);
+
+                if (store.containsKey(key)) {
+                    store.put(key, value);
+                    return respond(txid, txid + " X R ");
+                } else {
+                    store.put(key, value);
+                    return respond(txid, txid + " X A ");
+                }
+            }
+
+            return null;
+
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+
     
     public boolean isActive(String nodeName) throws Exception {
 	throw new Exception("Not implemented");
@@ -106,16 +299,57 @@ public class Node implements NodeInterface {
         throw new Exception("Not implemented");
     }
 
+    @Override
     public boolean exists(String key) throws Exception {
-	throw new Exception("Not implemented");
-    }
-    
-    public String read(String key) throws Exception {
-	throw new Exception("Not implemented");
+
+        String txid = nextTxID();
+
+        String encodedKey = CRNUtils.encodeString(key);
+
+        String request = txid + " E " + encodedKey;
+
+        String response = sendRequest(request);
+
+        return response != null && response.contains(" F Y ");
     }
 
+    @Override
+    public String read(String key) throws Exception {
+
+        String txid = nextTxID();
+
+        String encodedKey = CRNUtils.encodeString(key);
+
+        String request = txid + " R " + encodedKey;
+
+        String response = sendRequest(request);
+
+        if (response == null) return null;
+
+        if (response.contains(" S Y ")) {
+            String encodedValue = response.substring(response.indexOf(" S Y ") + 5);
+            return CRNUtils.decodeString(encodedValue);
+        }
+
+        return null;
+    }
+
+    @Override
     public boolean write(String key, String value) throws Exception {
-	throw new Exception("Not implemented");
+
+        String txid = nextTxID();
+
+        String encodedKey = CRNUtils.encodeString(key);
+        String encodedValue = CRNUtils.encodeString(value);
+
+        String request = txid + " W " + encodedKey + encodedValue;
+
+        String response = sendRequest(request);
+
+        if (response == null) return false;
+
+        // Check response type
+        return response.contains(" X A ") || response.contains(" X R ");
     }
 
     public boolean CAS(String key, String currentValue, String newValue) throws Exception {
