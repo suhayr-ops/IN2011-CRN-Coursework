@@ -153,6 +153,30 @@ class LocalTest {
 		boolean active = nodes[0].isActive("N:test0");
 		System.out.println("Is N:test0 active? " + active);
 
+		System.out.println("\n=== NEAREST TEST ===");
+
+		String txid = "ZZ";
+		String hash = HashID.bytesToHex(HashID.computeHashID("D:test"));
+
+		String request = txid + " N " + hash;
+
+		String response = nodes[0].handleMessage(request);
+
+		System.out.println("Nearest response: " + response);
+
+		System.out.println("\n=== CAS TEST ===");
+
+		boolean cas1 = nodes[0].CAS("D:test2", "world", "updated");
+		System.out.println("CAS 1 result: " + cas1);
+
+		String afterCas = nodes[0].read("D:test2");
+		System.out.println("Value after CAS: " + afterCas);
+
+		boolean cas2 = nodes[0].CAS("D:test2", "wrong", "fail");
+		System.out.println("CAS 2 result: " + cas2);
+
+		String afterCas2 = nodes[0].read("D:test2");
+		System.out.println("Value after failed CAS: " + afterCas2);
 	} catch (Exception e) {
 	    System.err.println("Exception during localTest");
 	    e.printStackTrace(System.err);
