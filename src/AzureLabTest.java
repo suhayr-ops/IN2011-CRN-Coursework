@@ -20,6 +20,9 @@ class AzureLabTest {
             node.handleIncomingMessages(BOOTSTRAP_WAIT_MS);
             System.out.println("[OK] Initial waiting stage finished");
             System.out.println();
+
+            node.debugAddressBook();
+
 // Read known values that should already exist on the network
             System.out.println("[STEP 2] Reading known poem entries from the network...");
             int versesFound = 0;

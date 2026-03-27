@@ -265,6 +265,11 @@ public class Node implements NodeInterface {
         return null;
     }
 
+    public void debugAddressBook() {
+        System.out.println("AddressBook size = " + addressBook.size());
+        System.out.println(addressBook);
+    }
+
     @Override
     public void setNodeName(String nodeName) throws Exception {
         this.nodeName = nodeName;
