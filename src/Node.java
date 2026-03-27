@@ -196,7 +196,7 @@ public class Node implements NodeInterface {
         for (int i = relayStack.size() - 1; i >= 0; i--) {
             String relayNode = relayStack.get(i);
             String encodedNode = CRNUtils.encodeString(relayNode);
-            finalMessage = finalMessage.substring(0, 2) + " V " + encodedNode + finalMessage.substring(3);
+            finalMessage = finalMessage.substring(0, 2) + " V " + encodedNode + " " + finalMessage.substring(3);
         }
 
         String txid = finalMessage.substring(0, 2);
@@ -210,13 +210,10 @@ public class Node implements NodeInterface {
         String address;
 
         if (!relayStack.isEmpty()) {
-            String relayNode = relayStack.peek();
+
 
             // remove "N:" prefix if present
-            if (relayNode.startsWith("N:")) {
-                relayNode = relayNode.substring(2);
-            }
-
+            String relayNode = relayStack.peek();
             address = addressBook.get(relayNode);
 
             if (address == null) {
@@ -386,15 +383,14 @@ public class Node implements NodeInterface {
 
                 String targetNode = CRNUtils.decodeString(encodedNode);
 
-                if (targetNode.startsWith("N:")) {
-                    targetNode = targetNode.substring(2);
+
+                if (targetNode.equals(this.nodeName)) {
+                    // stop relaying → process locally
+                    return handleMessage(txid + " " + embeddedMessage.trim());
                 }
 
                 String address = addressBook.get(targetNode);
-
-                if (address == null) {
-                    return null; // unknown node
-                }
+                if (address == null) return null;
 
                 String forwardedMessage = txid + " " + embeddedMessage.trim();
                 String response = sendRequestToNode(forwardedMessage, address);
@@ -417,28 +413,26 @@ public class Node implements NodeInterface {
                 String hashHex = parts[2];
                 byte[] targetHash = hexStringToBytes(hashHex);
 
-                java.util.List<String> closest = new java.util.ArrayList<>();
+                java.util.List<String> nodes = new java.util.ArrayList<>(addressBook.keySet());
 
-                for (String node : addressBook.keySet()) {
-                    byte[] nodeHash = HashID.computeHashID(node);
-                    int dist = HashID.distance(targetHash, nodeHash);
-                    closest.add(node + ":" + dist);
-                }
-
-                closest.sort((a, b) -> {
-                    int da = Integer.parseInt(a.split(":")[1]);
-                    int db = Integer.parseInt(b.split(":")[1]);
-                    return Integer.compare(da, db);
+                nodes.sort((a, b) -> {
+                    try {
+                        int da = HashID.distance(targetHash, HashID.computeHashID(a));
+                        int db = HashID.distance(targetHash, HashID.computeHashID(b));
+                        return Integer.compare(da, db);
+                    } catch (Exception e) {
+                        return 0;
+                    }
                 });
 
                 StringBuilder result = new StringBuilder();
-                int count = Math.min(3, closest.size());
+                int count = Math.min(3, nodes.size());
 
                 for (int i = 0; i < count; i++) {
-                    String node = closest.get(i).split(":")[0];
+                    String node = nodes.get(i);
                     String addr = addressBook.get(node);
 
-                    result.append(CRNUtils.encodeString("N:" + node));
+                    result.append(CRNUtils.encodeString(node));
                     result.append(CRNUtils.encodeString(addr));
                 }
 
@@ -502,8 +496,9 @@ public class Node implements NodeInterface {
 
                     for (int i = 0; i < tokens.length - 2; i++) {
                         if (tokens[i].startsWith("N:")) {
-                            String node = tokens[i].substring(2);
                             String address = tokens[i + 2];
+
+                            String node = tokens[i];   // keep "N:..."
                             addressBook.put(node, address);
                         }
                     }
@@ -532,7 +527,7 @@ public class Node implements NodeInterface {
                 if (key.startsWith("N:")) {
                     boolean existed = store.containsKey(key);
                     store.put(key, value);
-                    addressBook.put(key.substring(2), value);
+                    addressBook.put(key, value);
                     return existed ? (txid + " X R ") : (txid + " X A ");
                 }
 
