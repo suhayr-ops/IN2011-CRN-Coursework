@@ -211,13 +211,18 @@ public class Node implements NodeInterface {
 
         if (!relayStack.isEmpty()) {
 
-
-            // remove "N:" prefix if present
             String relayNode = relayStack.peek();
+
+            // Ensure consistent format
+            if (!relayNode.startsWith("N:")) {
+                relayNode = "N:" + relayNode;
+            }
+
             address = addressBook.get(relayNode);
 
             if (address == null) {
-                throw new RuntimeException("Relay node not found in addressBook: " + relayNode);
+                System.out.println("Relay lookup failed for: " + relayNode);
+                return null; // don't crash
             }
 
         } else {
@@ -387,7 +392,10 @@ public class Node implements NodeInterface {
                 String embeddedMessage = rest.substring(index);
 
                 String targetNode = CRNUtils.decodeString(encodedNode);
-
+                // Ensure consistent format
+                if (!targetNode.startsWith("N:")) {
+                    targetNode = "N:" + targetNode;
+                }
 
                 if (targetNode.equals(this.nodeName)) {
                     // stop relaying → process locally
@@ -501,10 +509,12 @@ public class Node implements NodeInterface {
 
                     for (int i = 0; i < tokens.length - 2; i++) {
                         if (tokens[i].startsWith("N:")) {
+                            String node = tokens[i];        // ALWAYS keep N:
                             String address = tokens[i + 2];
 
-                            String node = tokens[i];   // keep "N:..."
                             addressBook.put(node, address);
+
+                            System.out.println("Learned node: " + node + " -> " + address);
                         }
                     }
                 }
