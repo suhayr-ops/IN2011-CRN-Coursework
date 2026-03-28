@@ -141,7 +141,6 @@ public class Node implements NodeInterface {
         return bestNode;
     }
     private String sendRequestToNode(String message, String address) throws Exception {
-
         String txid = message.substring(0, 2);
 
         synchronized (pendingResponses) {
@@ -153,7 +152,6 @@ public class Node implements NodeInterface {
         int port = Integer.parseInt(parts[1]);
 
         byte[] data = message.getBytes();
-
         DatagramPacket packet = new DatagramPacket(
                 data,
                 data.length,
@@ -161,25 +159,30 @@ public class Node implements NodeInterface {
                 port
         );
 
-        socket.send(packet);
+        int attempts = 0;
 
-        long start = System.currentTimeMillis();
+        while (attempts < 3) {
+            socket.send(packet);
 
-        while (System.currentTimeMillis() - start < 5000) {
-            String response;
+            long start = System.currentTimeMillis();
 
-            synchronized (pendingResponses) {
-                response = pendingResponses.get(txid);
-            }
-
-            if (response != null) {
+            while (System.currentTimeMillis() - start < 5000) {
+                String response;
                 synchronized (pendingResponses) {
-                    pendingResponses.remove(txid);
+                    response = pendingResponses.get(txid);
                 }
-                return response;
+
+                if (response != null) {
+                    synchronized (pendingResponses) {
+                        pendingResponses.remove(txid);
+                    }
+                    return response;
+                }
+
+                Thread.sleep(10);
             }
 
-            Thread.sleep(10);
+            attempts++;
         }
 
         synchronized (pendingResponses) {
@@ -455,28 +458,29 @@ public class Node implements NodeInterface {
                 String embeddedMessage = rest.substring(index);
 
                 String targetNode = CRNUtils.decodeString(encodedNode);
-                // Ensure consistent format
+
                 if (!targetNode.startsWith("N:")) {
                     targetNode = "N:" + targetNode;
                 }
 
+                // clean message safely (THIS is fine)
+                String cleanMessage = embeddedMessage.trim().replaceAll(" +", " ");
+
+                // If this node is the target → process locally
                 if (targetNode.equals(this.nodeName)) {
-                    // stop relaying → process locally
-                    return handleMessage(txid + " " + embeddedMessage.trim());
+                    return handleMessage(txid + " " + cleanMessage);
                 }
 
+                //Otherwise forward ONCE
                 String address = addressBook.get(targetNode);
                 if (address == null) return null;
 
-                String forwardedMessage = txid + " " + embeddedMessage.trim();
-                String response = sendRequestToNode(forwardedMessage, address);
+                String forwardedMessage = txid + " " + cleanMessage;
 
+                String response = sendRequestToNode(forwardedMessage, address);
                 if (response == null) return null;
 
-                // restore original TXID
-                String newResponse = txid + " " + response.substring(3);
-
-                return respond(txid, newResponse);
+                return txid + " " + response.substring(3);
             }
             // G → Name
             if (type.equals("G")) {
@@ -529,8 +533,9 @@ public class Node implements NodeInterface {
                 if (!B) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        return sendRequestToNode(message, address);
+                        sendRequestToNode(message, address);
                     }
+                    return null;
                 }
 
                 if (A) return txid + " F Y ";
@@ -552,8 +557,9 @@ public class Node implements NodeInterface {
                 if (!B) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        return sendRequestToNode(message, address);
+                        sendRequestToNode(message, address);
                     }
+                    return null;
                 }
 
                 if (A) {
@@ -597,8 +603,9 @@ public class Node implements NodeInterface {
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        return sendRequestToNode(message, address);
+                        sendRequestToNode(message, address);
                     }
+                    return null; // IMPORTANT: do NOT return a response
                 }
 
                 boolean existed = store.containsKey(key);
@@ -653,7 +660,10 @@ public class Node implements NodeInterface {
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
-                    return sendRequestToNode(message, address);
+                    if (address != null) {
+                        sendRequestToNode(message, address);
+                    }
+                    return null; // IMPORTANT: do NOT return a response
                 }
 
                 if (!store.containsKey(key)) {
