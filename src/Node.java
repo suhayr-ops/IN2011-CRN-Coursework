@@ -188,6 +188,22 @@ public class Node implements NodeInterface {
 
         return null;
     }
+    private int encodedLength(String encoded) {
+        int firstSpace = encoded.indexOf(' ');
+        int spaceCount = Integer.parseInt(encoded.substring(0, firstSpace));
+
+        int index = firstSpace + 1;
+        int spacesSeen = 0;
+
+        while (spacesSeen <= spaceCount && index < encoded.length()) {
+            if (encoded.charAt(index) == ' ') {
+                spacesSeen++;
+            }
+            index++;
+        }
+
+        return index;
+    }
 
     private String sendRequest(String message) throws Exception {
         String finalMessage = message;
@@ -269,7 +285,54 @@ public class Node implements NodeInterface {
 
         return null;
     }
+    void bootstrapNetwork() throws Exception {
+        String bootstrapAddress = "10.216.34.30:20110"; // Azure node
 
+        String txid = nextTxID();
+        String hash = HashID.bytesToHex(HashID.computeHashID("bootstrap"));
+
+        String request = txid + " N " + hash;
+
+        String response = sendRequestToNode(request, bootstrapAddress);
+
+        if (response != null && response.contains(" O ")) {
+            String data = response.substring(response.indexOf(" O ") + 3);
+
+            while (!data.isEmpty()) {
+
+                // decode node
+                String node = CRNUtils.decodeString(data);
+
+                int nodeLen = encodedLength(data);
+                data = data.substring(nodeLen);
+
+                // decode address
+                String addr = CRNUtils.decodeString(data);
+
+                int addrLen = encodedLength(data);
+                data = data.substring(addrLen);
+
+                addressBook.put(node, addr);
+            }
+        }
+    }
+    private java.util.List<String> getClosestNodes(String key) throws Exception {
+        byte[] keyHash = HashID.computeHashID(key);
+
+        java.util.List<String> nodes = new java.util.ArrayList<>(addressBook.keySet());
+
+        nodes.sort((a, b) -> {
+            try {
+                int da = HashID.distance(HashID.computeHashID(a), keyHash);
+                int db = HashID.distance(HashID.computeHashID(b), keyHash);
+                return Integer.compare(da, db);
+            } catch (Exception e) {
+                return 0;
+            }
+        });
+
+        return nodes.subList(0, Math.min(3, nodes.size()));
+    }
     public void debugAddressBook() {
         System.out.println("AddressBook size = " + addressBook.size());
         System.out.println(addressBook);
@@ -457,26 +520,22 @@ public class Node implements NodeInterface {
                 String encodedKey = parts[2];
                 String key = CRNUtils.decodeString(encodedKey);
 
+                boolean A = store.containsKey(key);
+
                 String closestNode = findClosestNode(key);
+                boolean B = closestNode.equals(this.nodeName);
 
-                if (!closestNode.equals(this.nodeName)) {
+                // If not one of closest nodes → forward
+                if (!B) {
                     String address = addressBook.get(closestNode);
-
-                    if (address == null) return null;
-
-                    // do NOT forward again if already not local
-                    if (!this.nodeName.equals(closestNode)) {
+                    if (address != null) {
                         return sendRequestToNode(message, address);
                     }
                 }
 
-                if (store.containsKey(key)) {
-                    return respond(txid, txid + " F Y ");
-                } else {
-                    return respond(txid, txid + " F N ");
-                }
-
-
+                if (A) return txid + " F Y ";
+                if (B) return txid + " F N ";
+                return txid + " F ? ";
             }
 
             // R → Read
@@ -484,20 +543,26 @@ public class Node implements NodeInterface {
                 String encodedKey = parts[2];
                 String key = CRNUtils.decodeString(encodedKey);
 
+                boolean A = store.containsKey(key);
+
                 String closestNode = findClosestNode(key);
+                boolean B = closestNode.equals(this.nodeName);
 
-                if (!closestNode.equals(this.nodeName)) {
+                // Forward if not closest
+                if (!B) {
                     String address = addressBook.get(closestNode);
-                    return sendRequestToNode(message, address);
+                    if (address != null) {
+                        return sendRequestToNode(message, address);
+                    }
                 }
 
-                if (store.containsKey(key)) {
+                if (A) {
                     String value = store.get(key);
-                    String encodedValue = CRNUtils.encodeString(value);
-                    return txid + " S Y " + encodedValue;
-                } else {
-                    return txid + " S N ";
+                    return txid + " S Y " + CRNUtils.encodeString(value);
                 }
+
+                if (B) return txid + " S N ";
+                return txid + " S ? ";
             }
 
             // W → Write
@@ -664,6 +729,7 @@ public class Node implements NodeInterface {
 
     @Override
     public boolean exists(String key) throws Exception {
+        if (store.containsKey(key)) return true;
 
         String txid = nextTxID();
 
@@ -690,28 +756,30 @@ public class Node implements NodeInterface {
     @Override
     public String read(String key) throws Exception {
 
-        String txid = nextTxID();
-
-        String encodedKey = CRNUtils.encodeString(key);
-
-        String request = txid + " R " + encodedKey;
-
-        String closestNode = findClosestNode(key);
-        String address = addressBook.get(closestNode);
-
-        String response;
-
-        if (address != null) {
-            response = sendRequestToNode(request, address);
-        } else {
-            response = sendRequest(request);
+        // check locally
+        if (store.containsKey(key)) {
+            return store.get(key);
         }
 
-        if (response == null) return null;
+        String txid = nextTxID();
+        String encodedKey = CRNUtils.encodeString(key);
+        String request = txid + " R " + encodedKey;
 
-        if (response.contains(" S Y ")) {
-            String encodedValue = response.substring(response.indexOf(" S Y ") + 5);
-            return CRNUtils.decodeString(encodedValue);
+        java.util.List<String> nodes = getClosestNodes(key);
+
+        for (String node : nodes) {
+            String address = addressBook.get(node);
+
+            if (address == null) continue;
+
+            String response = sendRequestToNode(request, address);
+
+            if (response == null) continue;
+
+            if (response.contains(" S Y ")) {
+                String encodedValue = response.substring(response.indexOf(" S Y ") + 5);
+                return CRNUtils.decodeString(encodedValue);
+            }
         }
 
         return null;

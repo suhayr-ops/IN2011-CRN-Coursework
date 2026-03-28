@@ -22,6 +22,8 @@ class AzureLabTest {
             System.out.println();
 
             node.debugAddressBook();
+            node.handleIncomingMessages(BOOTSTRAP_WAIT_MS);
+            node.bootstrapNetwork(); // ADD THIS
 
 // Read known values that should already exist on the network
             System.out.println("[STEP 2] Reading known poem entries from the network...");
