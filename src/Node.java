@@ -569,57 +569,41 @@ public class Node implements NodeInterface {
             if (type.equals("W")) {
                 String rest = parts[2];
 
-                if (rest.contains("N:")) {
-                    String[] tokens = rest.split(" ");
-
-                    for (int i = 0; i < tokens.length - 2; i++) {
-                        if (tokens[i].startsWith("N:")) {
-                            String node = tokens[i];        // ALWAYS keep N:
-                            String address = tokens[i + 2];
-
-                            addressBook.put(node, address);
-
-                            System.out.println("Learned node: " + node + " -> " + address);
-                        }
-                    }
-                }
-
-                int firstSpace = rest.indexOf(' ');
-                int spaceCount = Integer.parseInt(rest.substring(0, firstSpace));
-
-                int index = firstSpace + 1;
-                int spacesSeen = 0;
-
-                while (spacesSeen <= spaceCount && index < rest.length()) {
-                    if (rest.charAt(index) == ' ') {
-                        spacesSeen++;
-                    }
-                    index++;
-                }
-
-                String encodedKey = rest.substring(0, index);
-                String encodedValue = rest.substring(index);
-
+                // --- decode key ---
+                int keyLen = encodedLength(rest);
+                String encodedKey = rest.substring(0, keyLen);
                 String key = CRNUtils.decodeString(encodedKey);
+
+                // --- decode value ---
+                String remaining = rest.substring(keyLen);
+                int valueLen = encodedLength(remaining);
+                String encodedValue = remaining.substring(0, valueLen);
                 String value = CRNUtils.decodeString(encodedValue);
 
-                // bootstrap/address entries: keep locally
+                // --- ADDRESS ENTRY (N:...) ---
                 if (key.startsWith("N:")) {
                     boolean existed = store.containsKey(key);
+
                     store.put(key, value);
                     addressBook.put(key, value);
+
                     return existed ? (txid + " X R ") : (txid + " X A ");
                 }
 
+                // --- DATA ENTRY (D:...) ---
                 String closestNode = findClosestNode(key);
 
+                // forward if not closest
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
-                    return sendRequestToNode(message, address);
+                    if (address != null) {
+                        return sendRequestToNode(message, address);
+                    }
                 }
 
                 boolean existed = store.containsKey(key);
                 store.put(key, value);
+
                 return existed ? (txid + " X R ") : (txid + " X A ");
             }
             if (type.equals("C")) {
