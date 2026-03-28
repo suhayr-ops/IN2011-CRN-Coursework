@@ -463,19 +463,16 @@ public class Node implements NodeInterface {
                     targetNode = "N:" + targetNode;
                 }
 
-                // clean message safely (THIS is fine)
-                String cleanMessage = embeddedMessage.trim().replaceAll(" +", " ");
+                // DO NOT MODIFY embeddedMessage
+                String forwardedMessage = txid + " " + embeddedMessage.trim();
 
-                // If this node is the target → process locally
+                // process locally
                 if (targetNode.equals(this.nodeName)) {
-                    return handleMessage(txid + " " + cleanMessage);
+                    return handleMessage(forwardedMessage);
                 }
 
-                //Otherwise forward ONCE
                 String address = addressBook.get(targetNode);
                 if (address == null) return null;
-
-                String forwardedMessage = txid + " " + cleanMessage;
 
                 String response = sendRequestToNode(forwardedMessage, address);
                 if (response == null) return null;
