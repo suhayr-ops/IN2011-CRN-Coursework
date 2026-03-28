@@ -588,12 +588,10 @@ public class Node implements NodeInterface {
 
                 // --- ADDRESS ENTRY (N:...) ---
                 if (key.startsWith("N:")) {
-                    boolean existed = store.containsKey(key);
-
                     store.put(key, value);
                     addressBook.put(key, value);
 
-                    return existed ? (txid + " X R ") : (txid + " X A ");
+                    return null; // 🔥 DO NOT RESPOND
                 }
 
                 // --- DATA ENTRY (D:...) ---
