@@ -531,9 +531,11 @@ public class Node implements NodeInterface {
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
-                    return sendRequestToNode(message, address);
+                    if (address != null) {
+                        sendRequestToNode(message, address);
+                    }
+                    return null; // 🔥 CRITICAL
                 }
-
                 boolean existed = store.containsKey(key);
                 store.put(key, value);
                 return existed ? (txid + " X R ") : (txid + " X A ");
@@ -585,7 +587,10 @@ public class Node implements NodeInterface {
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
-                    return sendRequestToNode(message, address);
+                    if (address != null) {
+                        sendRequestToNode(message, address);
+                    }
+                    return null; // 🔥 CRITICAL
                 }
 
                 if (!store.containsKey(key)) {
