@@ -16,6 +16,7 @@ import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.HashMap;
+import java.util.List;
 
 interface NodeInterface {
 
@@ -122,6 +123,28 @@ public class Node implements NodeInterface {
 
         return data;
     }
+    private List<String> getThreeClosestNodes(String key) throws Exception {
+        byte[] keyHash = HashID.computeHashID(key);
+
+        List<String> nodes = new java.util.ArrayList<>(addressBook.keySet());
+        nodes.add(this.nodeName); // include self
+
+        nodes.sort((a, b) -> {
+            try {
+                int da = HashID.distance(HashID.computeHashID(a), keyHash);
+                int db = HashID.distance(HashID.computeHashID(b), keyHash);
+                return Integer.compare(da, db);
+            } catch (Exception e) {
+                return 0;
+            }
+        });
+
+        return nodes.subList(0, Math.min(3, nodes.size()));
+    }
+
+    private boolean isOneOfThreeClosest(String key) throws Exception {
+        return getThreeClosestNodes(key).contains(this.nodeName);
+    }
     private String findClosestNode(String key) throws Exception {
         byte[] keyHash = HashID.computeHashID(key);
 
@@ -214,6 +237,9 @@ public class Node implements NodeInterface {
 
             // remove "N:" prefix if present
             String relayNode = relayStack.peek();
+            if (!relayNode.startsWith("N:")) {
+                relayNode = "N:" + relayNode;
+            }
             address = addressBook.get(relayNode);
 
             if (address == null) {
@@ -339,7 +365,9 @@ public class Node implements NodeInterface {
 
             synchronized (pendingResponses) {
                 if (isResponseType && pendingResponses.containsKey(txid)) {
-                    pendingResponses.put(txid, message);
+                    if (pendingResponses.get(txid) == null) {
+                        pendingResponses.put(txid, message);
+                    }
                     continue;
                 }
             }
@@ -391,7 +419,9 @@ public class Node implements NodeInterface {
                 String embeddedMessage = rest.substring(index);
 
                 String targetNode = CRNUtils.decodeString(encodedNode);
-
+                if (!targetNode.startsWith("N:")) {
+                    targetNode = "N:" + targetNode;
+                }
 
                 if (targetNode.equals(this.nodeName)) {
                     // stop relaying → process locally
@@ -408,7 +438,6 @@ public class Node implements NodeInterface {
 
                 // restore original TXID
                 String newResponse = txid + " " + response.substring(3);
-
                 return respond(txid, newResponse);
             }
             // G → Name
@@ -453,20 +482,22 @@ public class Node implements NodeInterface {
                 String encodedKey = parts[2];
                 String key = CRNUtils.decodeString(encodedKey);
 
-                String closestNode = findClosestNode(key);
+                /*String closestNode = findClosestNode(key);
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
                         return sendRequestToNode(message, address);
                     }
-                }
+                }*/
 
-                if (store.containsKey(key)) {
-                    return respond(txid, txid + " F Y ");
-                } else {
-                    return respond(txid, txid + " F N ");
-                }
+                boolean A = store.containsKey(key);
+                List<String> closest = getThreeClosestNodes(key);
+                boolean B = closest.contains(this.nodeName);
+
+                if (A) return txid + " F Y ";
+                if (B) return txid + " F N ";
+                return txid + " F ? ";
 
 
             }
@@ -476,20 +507,18 @@ public class Node implements NodeInterface {
                 String encodedKey = parts[2];
                 String key = CRNUtils.decodeString(encodedKey);
 
-                String closestNode = findClosestNode(key);
+                boolean A = store.containsKey(key);
+                List<String> closest = getThreeClosestNodes(key);
+                boolean B = closest.contains(this.nodeName);
 
-                if (!closestNode.equals(this.nodeName)) {
-                    String address = addressBook.get(closestNode);
-                    return sendRequestToNode(message, address);
-                }
-
-                if (store.containsKey(key)) {
+                if (A) {
                     String value = store.get(key);
                     String encodedValue = CRNUtils.encodeString(value);
                     return txid + " S Y " + encodedValue;
-                } else {
-                    return txid + " S N ";
                 }
+
+                if (B) return txid + " S N ";
+                return txid + " S ? ";
             }
 
             // W → Write
@@ -528,7 +557,6 @@ public class Node implements NodeInterface {
                 String key = CRNUtils.decodeString(encodedKey);
                 String value = CRNUtils.decodeString(encodedValue);
 
-                // bootstrap/address entries: keep locally
                 if (key.startsWith("N:")) {
                     boolean existed = store.containsKey(key);
                     store.put(key, value);
@@ -536,18 +564,21 @@ public class Node implements NodeInterface {
                     return existed ? (txid + " X R ") : (txid + " X A ");
                 }
 
-                String closestNode = findClosestNode(key);
+                boolean A = store.containsKey(key);
+                List<String> closest = getThreeClosestNodes(key);
+                boolean B = closest.contains(this.nodeName);
 
-                if (!closestNode.equals(this.nodeName)) {
-                    String address = addressBook.get(closestNode);
-                    if (address != null) {
-                        forwardMessage(message, address);
-                    }
-                    return null; // 🔥 CRITICAL
+                if (A) {
+                    store.put(key, value);
+                    return txid + " X R ";
                 }
-                boolean existed = store.containsKey(key);
-                store.put(key, value);
-                return existed ? (txid + " X R ") : (txid + " X A ");
+
+                if (B) {
+                    store.put(key, value);
+                    return txid + " X A ";
+                }
+
+                return txid + " X X ";
             }
             if (type.equals("C")) {
                 String rest = parts[2];
@@ -592,30 +623,33 @@ public class Node implements NodeInterface {
                 String currentValue = CRNUtils.decodeString(encodedCurrent);
                 String newValue = CRNUtils.decodeString(encodedNew);
 
-                String closestNode = findClosestNode(key);
+                /*String closestNode = findClosestNode(key);
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        forwardMessage(message, address);
+                        return sendRequestToNode(message, address);
                     }
-                    return null; // 🔥 CRITICAL
-                }
+                    return null;
+                }*/
 
-                if (!store.containsKey(key)) {
-                    // Key does not exist → ADD
+                boolean A = store.containsKey(key);
+                List<String> closest = getThreeClosestNodes(key);
+                boolean B = closest.contains(this.nodeName);
+
+                if (!A && !B) return txid + " D X ";
+
+                if (!A && B) {
                     store.put(key, newValue);
-                    return respond(txid, txid + " D A ");
+                    return txid + " D A ";
                 }
 
                 if (store.get(key).equals(currentValue)) {
-                    // Match → REPLACE
                     store.put(key, newValue);
-                    return respond(txid, txid + " D R ");
+                    return txid + " D R ";
                 }
 
-                // No match → DO NOTHING
-                return respond(txid, txid + " D N ");
+                return txid + " D N ";
             }
 
 
@@ -709,6 +743,9 @@ public class Node implements NodeInterface {
             return CRNUtils.decodeString(encodedValue);
         }
 
+        if (response.contains(" S N ")) return null;
+        if (response.contains(" S ? ")) return null;
+
         return null;
     }
 
@@ -736,7 +773,8 @@ public class Node implements NodeInterface {
         }
 
         return response != null &&
-                (response.contains(" X A ") || response.contains(" X R "));
+                (response.startsWith(txid + " X A") ||
+                        response.startsWith(txid + " X R"));
     }
 
     @Override
@@ -761,6 +799,7 @@ public class Node implements NodeInterface {
         }
 
         return response != null &&
-                (response.contains(" D R ") || response.contains(" D A "));
+                (response.startsWith(txid + " D R") ||
+                        response.startsWith(txid + " D A"));
     }
 }
