@@ -538,7 +538,7 @@ public class Node implements NodeInterface {
                     addressBook.put(node, address);
 
                     // VERY IMPORTANT: minimal valid response
-                    return txid + " X A ";
+                    return txid + " X A";
                 }
 
                 // ✅ NORMAL WRITE (key-value)
@@ -567,15 +567,15 @@ public class Node implements NodeInterface {
 
                 if (A) {
                     store.put(key, value);
-                    return txid + " X R ";
+                    return txid + " X R";
                 }
 
                 if (B) {
                     store.put(key, value);
-                    return txid + " X A ";
+                    return txid + " X A";
                 }
 
-                return txid + " X X ";
+                return txid + " X X";
             }
             if (type.equals("C")) {
                 String rest = parts[2];
