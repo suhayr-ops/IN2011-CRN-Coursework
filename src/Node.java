@@ -449,8 +449,14 @@ public class Node implements NodeInterface {
             }
             // G → Name
             if (type.equals("G")) {
+                System.out.println(">>> HIT G REQUEST <<<");
+
                 String encodedName = CRNUtils.encodeString(this.nodeName);
-                return txid + " H " + encodedName;
+                String response = txid + " H " + encodedName;
+
+                System.out.println(">>> SENDING: " + response);
+
+                return response;
             }
 
             // N → Nearest
