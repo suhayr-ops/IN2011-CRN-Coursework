@@ -290,7 +290,16 @@ public class Node implements NodeInterface {
     private String respond(String txid, String response) {
         return response;
     }
+    private void forwardMessage(String message, String address) throws Exception {
+        String[] parts = address.split(":");
+        InetAddress host = InetAddress.getByName(parts[0]);
+        int port = Integer.parseInt(parts[1]);
 
+        byte[] data = message.getBytes();
+
+        DatagramPacket packet = new DatagramPacket(data, data.length, host, port);
+        socket.send(packet);
+    }
     @Override
     public void handleIncomingMessages(int delay) throws Exception {
         byte[] buffer = new byte[65535];
@@ -532,7 +541,7 @@ public class Node implements NodeInterface {
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        sendRequestToNode(message, address);
+                        forwardMessage(message, address);
                     }
                     return null; // 🔥 CRITICAL
                 }
@@ -588,7 +597,7 @@ public class Node implements NodeInterface {
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        sendRequestToNode(message, address);
+                        forwardMessage(message, address);
                     }
                     return null; // 🔥 CRITICAL
                 }
