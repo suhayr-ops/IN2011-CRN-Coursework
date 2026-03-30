@@ -444,18 +444,14 @@ public class Node implements NodeInterface {
                 String encodedKey = parts[2];
                 String key = CRNUtils.decodeString(encodedKey);
 
-                /*String closestNode = findClosestNode(key);
+                String closestNode = findClosestNode(key);
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
-
-                    if (address == null) return null;
-
-                    // do NOT forward again if already not local
-                    if (!this.nodeName.equals(closestNode)) {
+                    if (address != null) {
                         return sendRequestToNode(message, address);
                     }
-                }*/
+                }
 
                 if (store.containsKey(key)) {
                     return respond(txid, txid + " F Y ");
@@ -471,12 +467,12 @@ public class Node implements NodeInterface {
                 String encodedKey = parts[2];
                 String key = CRNUtils.decodeString(encodedKey);
 
-                /*String closestNode = findClosestNode(key);
+                String closestNode = findClosestNode(key);
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     return sendRequestToNode(message, address);
-                }*/
+                }
 
                 if (store.containsKey(key)) {
                     String value = store.get(key);
@@ -531,12 +527,12 @@ public class Node implements NodeInterface {
                     return existed ? (txid + " X R ") : (txid + " X A ");
                 }
 
-                /*String closestNode = findClosestNode(key);
+                String closestNode = findClosestNode(key);
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     return sendRequestToNode(message, address);
-                }*/
+                }
 
                 boolean existed = store.containsKey(key);
                 store.put(key, value);
@@ -585,12 +581,12 @@ public class Node implements NodeInterface {
                 String currentValue = CRNUtils.decodeString(encodedCurrent);
                 String newValue = CRNUtils.decodeString(encodedNew);
 
-                /*String closestNode = findClosestNode(key);
+                String closestNode = findClosestNode(key);
 
                 if (!closestNode.equals(this.nodeName)) {
                     String address = addressBook.get(closestNode);
                     return sendRequestToNode(message, address);
-                }*/
+                }
 
                 if (!store.containsKey(key)) {
                     // Key does not exist → ADD
