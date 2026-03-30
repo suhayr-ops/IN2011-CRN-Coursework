@@ -296,6 +296,10 @@ public class Node implements NodeInterface {
 
     @Override
     public void setNodeName(String nodeName) throws Exception {
+        if (!nodeName.startsWith("N:")) {
+            nodeName = "N:" + nodeName;
+        }
+
         this.nodeName = nodeName;
         this.nodeHash = HashID.computeHashID(nodeName);
     }
@@ -446,7 +450,7 @@ public class Node implements NodeInterface {
             // G → Name
             if (type.equals("G")) {
                 String encodedName = CRNUtils.encodeString(this.nodeName);
-                return respond(txid, txid + " H " + encodedName);
+                return txid + " H " + encodedName;
             }
 
             // N → Nearest
@@ -770,8 +774,8 @@ public class Node implements NodeInterface {
         }
 
         return response != null &&
-                (response.startsWith(txid + " X A ") ||
-                        response.startsWith(txid + " X R "));
+                (response.startsWith(txid + " X A") ||
+                        response.startsWith(txid + " X R"));
     }
 
     @Override
