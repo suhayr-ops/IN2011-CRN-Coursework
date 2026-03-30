@@ -528,19 +528,20 @@ public class Node implements NodeInterface {
             if (type.equals("W")) {
                 String rest = parts[2];
 
-                if (rest.contains("N:")) {
+                // ✅ BOOTSTRAP CASE (node registration)
+                if (rest.startsWith("0 N:")) {
                     String[] tokens = rest.split(" ");
 
-                    for (int i = 0; i < tokens.length - 2; i++) {
-                        if (tokens[i].startsWith("N:")) {
-                            String address = tokens[i + 2];
+                    String node = tokens[1];       // N:black
+                    String address = tokens[3];   // IP:port
 
-                            String node = tokens[i];   // keep "N:..."
-                            addressBook.put(node, address);
-                        }
-                    }
+                    addressBook.put(node, address);
+
+                    // VERY IMPORTANT: minimal valid response
+                    return txid + " X A ";
                 }
 
+                // ✅ NORMAL WRITE (key-value)
                 int firstSpace = rest.indexOf(' ');
                 int spaceCount = Integer.parseInt(rest.substring(0, firstSpace));
 
@@ -559,13 +560,6 @@ public class Node implements NodeInterface {
 
                 String key = CRNUtils.decodeString(encodedKey);
                 String value = CRNUtils.decodeString(encodedValue);
-
-                if (key.startsWith("N:")) {
-                    boolean existed = store.containsKey(key);
-                    store.put(key, value);
-                    addressBook.put(key, value);
-                    return existed ? (txid + " X R ") : (txid + " X A " );
-                }
 
                 boolean A = store.containsKey(key);
                 List<String> closest = getThreeClosestNodes(key);
