@@ -164,7 +164,6 @@ public class Node implements NodeInterface {
         return bestNode;
     }
     private String sendRequestToNode(String message, String address) throws Exception {
-
         String txid = message.substring(0, 2);
 
         synchronized (pendingResponses) {
@@ -189,6 +188,8 @@ public class Node implements NodeInterface {
         long start = System.currentTimeMillis();
 
         while (System.currentTimeMillis() - start < 5000) {
+            handleIncomingMessages(1); //CRITICAL FIX
+
             String response;
 
             synchronized (pendingResponses) {
@@ -265,6 +266,8 @@ public class Node implements NodeInterface {
             long start = System.currentTimeMillis();
 
             while (System.currentTimeMillis() - start < 5000) {
+                handleIncomingMessages(1); //  process incoming while waiting
+
                 String response;
 
                 synchronized (pendingResponses) {
@@ -561,7 +564,7 @@ public class Node implements NodeInterface {
                     boolean existed = store.containsKey(key);
                     store.put(key, value);
                     addressBook.put(key, value);
-                    return existed ? (txid + " X R") : (txid + " X A");
+                    return existed ? (txid + " X R ") : (txid + " X A " );
                 }
 
                 boolean A = store.containsKey(key);
@@ -570,15 +573,15 @@ public class Node implements NodeInterface {
 
                 if (A) {
                     store.put(key, value);
-                    return txid + " X R";
+                    return txid + " X R ";
                 }
 
                 if (B) {
                     store.put(key, value);
-                    return txid + " X A";
+                    return txid + " X A ";
                 }
 
-                return txid + " X X";
+                return txid + " X X ";
             }
             if (type.equals("C")) {
                 String rest = parts[2];
@@ -637,19 +640,19 @@ public class Node implements NodeInterface {
                 List<String> closest = getThreeClosestNodes(key);
                 boolean B = closest.contains(this.nodeName);
 
-                if (!A && !B) return txid + " D X";
+                if (!A && !B) return txid + " D X ";
 
                 if (!A && B) {
                     store.put(key, newValue);
-                    return txid + " D A";
+                    return txid + " D A ";
                 }
 
                 if (store.get(key).equals(currentValue)) {
                     store.put(key, newValue);
-                    return txid + " D R";
+                    return txid + " D R ";
                 }
 
-                return txid + " D N";
+                return txid + " D N ";
             }
 
 
@@ -773,8 +776,8 @@ public class Node implements NodeInterface {
         }
 
         return response != null &&
-                (response.startsWith(txid + " X A") ||
-                        response.startsWith(txid + " X R"));
+                (response.startsWith(txid + " X A ") ||
+                        response.startsWith(txid + " X R "));
     }
 
     @Override
@@ -799,7 +802,7 @@ public class Node implements NodeInterface {
         }
 
         return response != null &&
-                (response.startsWith(txid + " D R") ||
-                        response.startsWith(txid + " D A"));
+                (response.startsWith(txid + " D R ") ||
+                        response.startsWith(txid + " D A "));
     }
 }
