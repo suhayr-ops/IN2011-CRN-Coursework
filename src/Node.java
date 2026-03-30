@@ -458,15 +458,12 @@ public class Node implements NodeInterface {
                 String embeddedMessage = rest.substring(index);
 
                 String targetNode = CRNUtils.decodeString(encodedNode);
-
                 if (!targetNode.startsWith("N:")) {
                     targetNode = "N:" + targetNode;
                 }
 
-                // DO NOT MODIFY embeddedMessage
                 String forwardedMessage = txid + " " + embeddedMessage.trim();
 
-                // process locally
                 if (targetNode.equals(this.nodeName)) {
                     return handleMessage(forwardedMessage);
                 }
@@ -478,11 +475,6 @@ public class Node implements NodeInterface {
                 if (response == null) return null;
 
                 return txid + " " + response.substring(3);
-            }
-            // G → Name
-            if (type.equals("G")) {
-                String encodedName = CRNUtils.encodeString(this.nodeName);
-                return respond(txid, txid + " H " + encodedName);
             }
 
             // N → Nearest
@@ -526,13 +518,11 @@ public class Node implements NodeInterface {
                 String closestNode = findClosestNode(key);
                 boolean B = closestNode.equals(this.nodeName);
 
-                // If not one of closest nodes → forward
                 if (!B) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        sendRequestToNode(message, address);
+                        return sendRequestToNode(message, address);
                     }
-                    return null;
                 }
 
                 if (A) return txid + " F Y ";
@@ -550,13 +540,11 @@ public class Node implements NodeInterface {
                 String closestNode = findClosestNode(key);
                 boolean B = closestNode.equals(this.nodeName);
 
-                // Forward if not closest
                 if (!B) {
                     String address = addressBook.get(closestNode);
                     if (address != null) {
-                        sendRequestToNode(message, address);
+                        return sendRequestToNode(message, address);
                     }
-                    return null;
                 }
 
                 if (A) {
@@ -585,10 +573,10 @@ public class Node implements NodeInterface {
 
                 // --- ADDRESS ENTRY (N:...) ---
                 if (key.startsWith("N:")) {
+                    boolean existed = store.containsKey(key);
                     store.put(key, value);
                     addressBook.put(key, value);
-
-                    return null; // 🔥 DO NOT RESPOND
+                    return existed ? (txid + " X R ") : (txid + " X A ");
                 }
 
                 // --- DATA ENTRY (D:...) ---
@@ -607,6 +595,11 @@ public class Node implements NodeInterface {
                 store.put(key, value);
 
                 return existed ? (txid + " X R ") : (txid + " X A ");
+            }
+            // G → Name
+            if (type.equals("G")) {
+                String encodedName = CRNUtils.encodeString(this.nodeName);
+                return txid + " H " + encodedName;
             }
             if (type.equals("C")) {
                 String rest = parts[2];
@@ -658,7 +651,6 @@ public class Node implements NodeInterface {
                     if (address != null) {
                         sendRequestToNode(message, address);
                     }
-                    return null; // IMPORTANT: do NOT return a response
                 }
 
                 if (!store.containsKey(key)) {
@@ -689,17 +681,23 @@ public class Node implements NodeInterface {
     public boolean isActive(String nodeName) throws Exception {
 
         String txid = nextTxID();
-
         String request = txid + " G";
 
-        String response = sendRequest(request);
+        String response;
+
+        String address = addressBook.get(nodeName);
+
+        if (address != null) {
+            // If we know the node → direct
+            response = sendRequestToNode(request, address);
+        } else {
+            // If we DON'T know it → send normally (like relay/local)
+            response = sendRequest(request);
+        }
 
         if (response == null) return false;
-
-        // Check it's a name response
         if (!response.contains(" H ")) return false;
 
-        // Extract returned name
         String encodedName = response.substring(response.indexOf(" H ") + 3);
         String returnedName = CRNUtils.decodeString(encodedName);
 
