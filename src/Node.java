@@ -3,7 +3,7 @@
 //
 // Submission by
 //  Suhayr Mohamud
-//  YOUR_STUDENT_ID_NUMBER_GOES_HERE
+//  240017805
 //  suhayr.mohamud@city.ac.uk
 
 
@@ -29,6 +29,8 @@ public class Node implements NodeInterface {
     private static final int MAX_RESENDS = 3;
     private static final int HANDLE_POLL_MS = 100;
     private static final int MAX_NEAREST_QUERIES = 8;
+    private static final int TXID_FIRST_CHAR = 33;
+    private static final int TXID_CHAR_COUNT = 94;
 
     private String nodeName;
     private byte[] nodeHash;
@@ -49,9 +51,9 @@ public class Node implements NodeInterface {
     private int txCounter = 0;
 
     private synchronized String nextTxID() {
-        txCounter++;
-        char c1 = (char) ('A' + (txCounter / 26) % 26);
-        char c2 = (char) ('A' + txCounter % 26);
+        txCounter = (txCounter + 1) % (TXID_CHAR_COUNT * TXID_CHAR_COUNT);
+        char c1 = (char) (TXID_FIRST_CHAR + (txCounter / TXID_CHAR_COUNT));
+        char c2 = (char) (TXID_FIRST_CHAR + (txCounter % TXID_CHAR_COUNT));
         return "" + c1 + c2;
     }
 
@@ -741,6 +743,7 @@ public class Node implements NodeInterface {
     public boolean exists(String key) throws Exception {
         String txid = nextTxID();
         String request = txid + " E " + CRNUtils.encodeString(key);
+        boolean seenClosestNegative = false;
 
         for (String node : getCandidateNodesForKey(key, 3)) {
             String response = sendRequestToNode(request, node, getAddressForNode(node));
@@ -751,7 +754,7 @@ public class Node implements NodeInterface {
                 return true;
             }
             if (response.startsWith(txid + " F N ")) {
-                return false;
+                seenClosestNegative = true;
             }
         }
 
@@ -762,6 +765,7 @@ public class Node implements NodeInterface {
     public String read(String key) throws Exception {
         String txid = nextTxID();
         String request = txid + " R " + CRNUtils.encodeString(key);
+        boolean seenClosestNegative = false;
 
         for (String node : getCandidateNodesForKey(key, 3)) {
             String response = sendRequestToNode(request, node, getAddressForNode(node));
@@ -773,10 +777,13 @@ public class Node implements NodeInterface {
                 return value.value;
             }
             if (response.startsWith(txid + " S N ")) {
-                return null;
+                seenClosestNegative = true;
             }
         }
 
+        if (seenClosestNegative) {
+            return null;
+        }
         return null;
     }
 
