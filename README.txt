@@ -41,8 +41,9 @@ Working Functionality
 
 
 Known Limitations
-=================
 
-- Student ID is still missing from the source file header and should be filled in before submission.
-- The implementation has been tested with the provided local and Azure smoke tests, but it has
-  not been exhaustively tested against every possible malformed-packet or packet-impairment case.
+- The code has been tested with the LocalTest and Azure smoke test, but not against every possible hidden topology or malformed packet case.
+- UDP retry handling is implemented, but packet loss, duplication, and reordering have not been stress-tested in every stressful scenarios.
+- Relay works in local testing, but it has not been heavily tested with longer relay chains or very busy traffic.
+- Data rebalancing when newly discovered nodes are closer is limited.
+
