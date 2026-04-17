@@ -185,10 +185,14 @@ public class Node implements NodeInterface {
 
         socket.send(packet);
 
+        return waitForPendingResponse(txid, 5000);
+    }
+
+    private String waitForPendingResponse(String txid, int timeoutMs) throws Exception {
         long start = System.currentTimeMillis();
 
-        while (System.currentTimeMillis() - start < 5000) {
-            handleIncomingMessages(1); //CRITICAL FIX
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            handleIncomingMessages(1);
 
             String response;
 
@@ -231,67 +235,49 @@ public class Node implements NodeInterface {
 
         byte[] data = finalMessage.getBytes();
 
-        String address;
-
         if (!relayStack.isEmpty()) {
-
-
-            // remove "N:" prefix if present
             String relayNode = relayStack.peek();
             if (!relayNode.startsWith("N:")) {
                 relayNode = "N:" + relayNode;
             }
-            address = addressBook.get(relayNode);
+            String address = addressBook.get(relayNode);
 
             if (address == null) {
                 throw new RuntimeException("Relay node not found in addressBook: " + relayNode);
             }
 
-        } else {
-            // fallback to local node (important for non-relay cases)
-            address = "127.0.0.1:" + socket.getLocalPort();
-        }
+            String[] parts = address.split(":");
+            InetAddress host = InetAddress.getByName(parts[0]);
+            int port = Integer.parseInt(parts[1]);
 
-        String[] parts = address.split(":");
-        InetAddress host = InetAddress.getByName(parts[0]);
-        int port = Integer.parseInt(parts[1]);
+            DatagramPacket packet = new DatagramPacket(data, data.length, host, port);
 
-        DatagramPacket packet = new DatagramPacket(data, data.length, host, port);
+            int attempts = 0;
+            while (attempts < 3) {
+                socket.send(packet);
 
-        int attempts = 0;
-
-        while (attempts < 3) {
-            socket.send(packet);
-
-            long start = System.currentTimeMillis();
-
-            while (System.currentTimeMillis() - start < 5000) {
-                handleIncomingMessages(1); //  process incoming while waiting
-
-                String response;
-
-                synchronized (pendingResponses) {
-                    response = pendingResponses.get(txid);
-                }
-
+                String response = waitForPendingResponse(txid, 5000);
                 if (response != null) {
-                    synchronized (pendingResponses) {
-                        pendingResponses.remove(txid);
-                    }
                     return response;
                 }
 
-                Thread.sleep(10);
+                synchronized (pendingResponses) {
+                    pendingResponses.put(txid, null);
+                }
+                attempts++;
             }
 
-            attempts++;
+            synchronized (pendingResponses) {
+                pendingResponses.remove(txid);
+            }
+            return null;
         }
 
         synchronized (pendingResponses) {
             pendingResponses.remove(txid);
         }
 
-        return null;
+        return handleMessage(finalMessage);
     }
 
     @Override
@@ -307,17 +293,6 @@ public class Node implements NodeInterface {
     @Override
     public void openPort(int portNumber) throws Exception {
         this.socket = new DatagramSocket(portNumber);
-
-        Thread listener = new Thread(() -> {
-            try {
-                handleIncomingMessages(0);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        });
-
-        listener.setDaemon(true);
-        listener.start();
     }
 
     private String respond(String txid, String response) {
@@ -401,7 +376,11 @@ public class Node implements NodeInterface {
             String[] parts = message.split(" ", 3);
 
             String txid = parts[0];
-            String type = parts[1];
+
+        // FIX: enforce valid TXID
+            if (!txid.matches("[A-Z]{2}")) {
+                txid = "AA";
+            }            String type = parts[1];
 
             System.out.println("Node " + nodeName + " received: " + message);
             // detect node introduction (bootstrap message)
@@ -669,12 +648,24 @@ public class Node implements NodeInterface {
 
     @Override
     public boolean isActive(String nodeName) throws Exception {
+        if (!nodeName.startsWith("N:")) {
+            nodeName = "N:" + nodeName;
+        }
+
+        if (nodeName.equals(this.nodeName)) {
+            return true;
+        }
 
         String txid = nextTxID();
 
         String request = txid + " G";
 
-        String response = sendRequest(request);
+        String address = addressBook.get(nodeName);
+        if (address == null) {
+            return false;
+        }
+
+        String response = sendRequestToNode(request, address);
 
         if (response == null) return false;
 
