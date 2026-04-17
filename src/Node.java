@@ -18,6 +18,7 @@ import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,6 +32,7 @@ public class Node implements NodeInterface {
     private static final int MAX_NEAREST_QUERIES = 8;
     private static final int TXID_FIRST_CHAR = 33;
     private static final int TXID_CHAR_COUNT = 94;
+    private static final int MAX_CACHED_REQUESTS = 512;
 
     private String nodeName;
     private byte[] nodeHash;
@@ -41,6 +43,14 @@ public class Node implements NodeInterface {
     private final HashMap<String, String> addressBook = new HashMap<>();
     private final HashMap<String, String> pendingResponses = new HashMap<>();
     private final Stack<String> relayStack = new Stack<>();
+    private final LinkedHashMap<String, String> recentRequestResponses =
+            new LinkedHashMap<String, String>(MAX_CACHED_REQUESTS + 1, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+                    // just stop this getting silly big
+                    return size() > MAX_CACHED_REQUESTS;
+                }
+            };
 
     public void putLocal(String key, String value) {
         synchronized (store) {
@@ -101,6 +111,7 @@ public class Node implements NodeInterface {
         while (index < s.length()) {
             if (s.charAt(index) == ' ') {
                 if (spacesSeen == spaceCount) {
+                    // this is where the CRN string ends
                     return new ParsedString(s.substring(firstSpace + 1, index), index + 1);
                 }
                 spacesSeen++;
@@ -186,6 +197,7 @@ public class Node implements NodeInterface {
 
             synchronized (addressBook) {
                 if (addressBook.containsKey(name)) {
+                    // keep the newest one we saw
                     addressBook.put(name, address);
                     return;
                 }
@@ -199,6 +211,7 @@ public class Node implements NodeInterface {
                 }
 
                 if (atDistance < 3) {
+                    // RFC says max 3 at the same distance
                     addressBook.put(name, address);
                 }
             }
@@ -306,6 +319,63 @@ public class Node implements NodeInterface {
         }
     }
 
+    private boolean isRequestRequiringResponse(String message) {
+        if (message == null || message.length() < 4) {
+            return false;
+        }
+
+        
+        String[] parts = message.split(" ", 3);
+        if (parts.length < 2 || parts[0].length() != 2) {
+            return false;
+        }
+
+
+
+        String type = parts[1];
+        return "G".equals(type) || "N".equals(type) || "V".equals(type)
+                || "E".equals(type) || "R".equals(type) || "W".equals(type) || "C".equals(type);
+    }
+
+
+
+    private String requestCacheKey(InetAddress senderAddress, int senderPort, String message) {
+        if (senderAddress == null || message == null) {
+            return null;
+        }
+        return senderAddress.getHostAddress() + ":" + senderPort + "|" + message;
+    }
+
+
+
+    private String getCachedResponse(InetAddress senderAddress, int senderPort, String message) {
+        String key = requestCacheKey(senderAddress, senderPort, message);
+        if (key == null) {
+            return null;
+        }
+        synchronized (recentRequestResponses) {
+            return recentRequestResponses.get(key);
+        }
+    }
+
+
+
+    private void cacheResponse(InetAddress senderAddress, int senderPort, String message, String response) {
+        if (response == null || !isRequestRequiringResponse(message)) {
+            return;
+        }
+
+        String key = requestCacheKey(senderAddress, senderPort, message);
+        if (key == null) {
+            return;
+        }
+
+        synchronized (recentRequestResponses) {
+            // for if the same packet turns up again
+            recentRequestResponses.put(key, response);
+        }
+    }
+
     private String waitForPendingResponse(String txid, int timeoutMs) throws Exception {
         long start = System.currentTimeMillis();
 
@@ -344,6 +414,7 @@ public class Node implements NodeInterface {
 
     private void drainIncomingMessages() throws Exception {
         if (socket != null) {
+            // delete anything already waiting
             handleIncomingMessages(1);
         }
     }
@@ -361,6 +432,7 @@ public class Node implements NodeInterface {
         if (!relayStack.isEmpty()) {
             String nextTarget = targetNode;
             for (int i = relayStack.size() - 1; i >= 0; i--) {
+                // wrap from the inside out
                 outboundMessage = wrapRelayMessage(outboundMessage, nextTarget);
                 String relayNode = relayStack.get(i);
                 if (!relayNode.startsWith("N:")) {
@@ -368,6 +440,8 @@ public class Node implements NodeInterface {
                 }
                 nextTarget = relayNode;
             }
+
+            
             firstHopAddress = getAddressForNode(nextTarget);
         }
 
@@ -375,12 +449,15 @@ public class Node implements NodeInterface {
             return null;
         }
 
+
         String txid = outboundMessage.substring(0, 2);
         synchronized (pendingResponses) {
             pendingResponses.put(txid, null);
         }
 
+
         for (int resend = 0; resend <= MAX_RESENDS; resend++) {
+            // wait for 5 secs then tries it again
             sendUdpMessage(outboundMessage, firstHopAddress);
             String response = waitForPendingResponse(txid, RESPONSE_TIMEOUT_MS);
             if (response != null) {
@@ -396,23 +473,32 @@ public class Node implements NodeInterface {
         synchronized (pendingResponses) {
             pendingResponses.remove(txid);
         }
+
         return null;
     }
 
+
+
     private void queryNearestNodes(byte[] keyHash) throws Exception {
+
+
         String hashHex = HashID.bytesToHex(keyHash);
         Set<String> queried = new HashSet<>();
+
 
         for (int i = 0; i < MAX_NEAREST_QUERIES; i++) {
             String nextNode = null;
             int bestDistance = Integer.MAX_VALUE;
 
             synchronized (addressBook) {
+
                 for (Map.Entry<String, String> entry : addressBook.entrySet()) {
                     String node = entry.getKey();
                     if (queried.contains(node)) {
                         continue;
                     }
+
+
 
                     int distance = HashID.distance(HashID.computeHashID(node), keyHash);
                     if (distance < bestDistance) {
@@ -428,6 +514,8 @@ public class Node implements NodeInterface {
 
             queried.add(nextNode);
             String txid = nextTxID();
+
+            //ask what the node knows, then see if we can get closer
             String response = sendRequestToNode(txid + " N " + hashHex, nextNode, getAddressForNode(nextNode));
             if (response != null) {
                 handleResponseMessage(response, null, -1);
@@ -435,29 +523,41 @@ public class Node implements NodeInterface {
         }
     }
 
+
+
     private List<String> getCandidateNodesForKey(String key, int limit) throws Exception {
+
         drainIncomingMessages();
         byte[] keyHash = HashID.computeHashID(key);
         queryNearestNodes(keyHash);
         return getClosestKnownNodes(keyHash, limit);
     }
 
+
+
     private String processRelayMessage(String outerTxid, String rest) throws Exception {
+
+
         ParsedString target = parseEncodedString(rest, 0);
+
         String embedded = rest.substring(target.nextIndex);
         if (embedded.length() < 3) {
             return null;
         }
 
         String targetNode = target.value;
+
         if (targetNode.equals(nodeName)) {
+            //relay reached us, so it deos the inner message now
             return processMessage(embedded, null, -1);
         }
 
         String targetAddress = getAddressForNode(targetNode);
+
         if (targetAddress == null) {
             return null;
         }
+
 
         String forwarded = nextTxID() + embedded.substring(2);
         String response = sendRequestToNode(forwarded, targetNode, targetAddress);
@@ -465,45 +565,64 @@ public class Node implements NodeInterface {
             return null;
         }
 
+        //swap back to the outer txid before sending it back
         return outerTxid + response.substring(2);
+
     }
 
+
+
     private String processMessage(String message, InetAddress senderAddress, int senderPort) throws Exception {
+
         if (message == null || message.length() < 3) {
             return null;
         }
 
         String[] parts = message.split(" ", 3);
+
         if (parts.length < 2) {
             return null;
         }
 
         String txid = parts[0];
         String type = parts[1];
+
+
         if (txid.length() != 2) {
             return null;
         }
 
+
+
         boolean isResponseType = "H".equals(type) || "O".equals(type) || "F".equals(type)
                 || "S".equals(type) || "X".equals(type) || "D".equals(type);
+
         if (isResponseType) {
+            //replies can turn up out of order, so it catches them here
             handleResponseMessage(message, senderAddress, senderPort);
             return null;
         }
 
         if ("I".equals(type)) {
+
+
             return null;
         }
 
         if ("G".equals(type)) {
             return txid + " H " + CRNUtils.encodeString(nodeName);
+
         }
 
+
         if ("V".equals(type) && parts.length == 3) {
+
             return processRelayMessage(txid, parts[2]);
         }
 
+
         if ("N".equals(type) && parts.length == 3) {
+
             byte[] targetHash = hexStringToBytes(parts[2].trim());
             StringBuilder result = new StringBuilder();
 
@@ -523,7 +642,9 @@ public class Node implements NodeInterface {
             return null;
         }
 
+
         if ("E".equals(type)) {
+
             ParsedString encodedKey = parseEncodedString(parts[2], 0);
             String key = encodedKey.value;
 
@@ -537,6 +658,7 @@ public class Node implements NodeInterface {
         }
 
         if ("R".equals(type)) {
+
             ParsedString encodedKey = parseEncodedString(parts[2], 0);
             String key = encodedKey.value;
 
@@ -550,6 +672,7 @@ public class Node implements NodeInterface {
         }
 
         if ("W".equals(type)) {
+
             ParsedString encodedKey = parseEncodedString(parts[2], 0);
             ParsedString encodedValue = parseEncodedString(parts[2], encodedKey.nextIndex);
             String key = encodedKey.value;
@@ -561,19 +684,25 @@ public class Node implements NodeInterface {
                 return txid + (replace ? " X R" : " X A");
             }
 
+
+
             if (!isValidDataName(key)) {
                 return txid + " X X";
             }
 
             synchronized (store) {
                 if (store.containsKey(key)) {
+                    //same key again, so this is a replace
                     store.put(key, value);
                     return txid + " X R";
                 }
             }
 
+
+
             if (isOneOfThreeClosest(key)) {
                 synchronized (store) {
+                    //close enough, so keep it here
                     store.put(key, value);
                 }
                 return txid + " X A";
@@ -583,9 +712,12 @@ public class Node implements NodeInterface {
         }
 
         if ("C".equals(type)) {
+
             ParsedString encodedKey = parseEncodedString(parts[2], 0);
+
             ParsedString encodedCurrent = parseEncodedString(parts[2], encodedKey.nextIndex);
             ParsedString encodedNew = parseEncodedString(parts[2], encodedCurrent.nextIndex);
+
 
             String key = encodedKey.value;
             String currentValue = encodedCurrent.value;
@@ -593,10 +725,13 @@ public class Node implements NodeInterface {
 
             if (isValidNodeName(key) && isValidAddress(newValue)) {
                 String existing = getAddressForNode(key);
+
                 if (existing == null) {
                     learnAddress(key, newValue);
                     return txid + " D A ";
+
                 }
+
                 if (existing.equals(currentValue)) {
                     learnAddress(key, newValue);
                     return txid + " D R ";
@@ -605,13 +740,16 @@ public class Node implements NodeInterface {
             }
 
             synchronized (store) {
+
                 if (store.containsKey(key)) {
                     if (store.get(key).equals(currentValue)) {
+
                         store.put(key, newValue);
                         return txid + " D R ";
                     }
                     return txid + " D N ";
                 }
+
             }
 
             if (isOneOfThreeClosest(key)) {
@@ -626,6 +764,8 @@ public class Node implements NodeInterface {
 
         return null;
     }
+
+
 
     @Override
     public void setNodeName(String nodeName) throws Exception {
@@ -647,9 +787,12 @@ public class Node implements NodeInterface {
         }
     }
 
+
+
     @Override
     public void handleIncomingMessages(int delay) throws Exception {
         if (socket == null) {
+
             throw new IllegalStateException("Port not opened");
         }
 
@@ -659,6 +802,7 @@ public class Node implements NodeInterface {
             int timeout;
             if (delay == 0) {
                 timeout = 0;
+
             } else {
                 long remaining = endTime - System.currentTimeMillis();
                 if (remaining <= 0) {
@@ -668,6 +812,7 @@ public class Node implements NodeInterface {
             }
 
             socket.setSoTimeout(timeout);
+
             byte[] buffer = new byte[65535];
             DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
 
@@ -684,13 +829,25 @@ public class Node implements NodeInterface {
             }
 
             String message = new String(packet.getData(), 0, packet.getLength());
+            String cachedResponse = getCachedResponse(packet.getAddress(), packet.getPort(), message);
+            if (cachedResponse != null) {
+                byte[] responseBytes = cachedResponse.getBytes();
+                DatagramPacket reply = new DatagramPacket(responseBytes, responseBytes.length,
+                        packet.getAddress(), packet.getPort());
+                socket.send(reply);
+                continue;
+            }
+
             String response = processMessage(message, packet.getAddress(), packet.getPort());
 
             if (response != null) {
+                cacheResponse(packet.getAddress(), packet.getPort(), message, response);
+
                 byte[] responseBytes = response.getBytes();
                 DatagramPacket reply = new DatagramPacket(responseBytes, responseBytes.length,
                         packet.getAddress(), packet.getPort());
                 socket.send(reply);
+
             }
         }
     }
@@ -703,6 +860,8 @@ public class Node implements NodeInterface {
         }
     }
 
+
+
     @Override
     public boolean isActive(String nodeName) throws Exception {
         if (!nodeName.startsWith("N:")) {
@@ -713,8 +872,12 @@ public class Node implements NodeInterface {
             return true;
         }
 
+
         drainIncomingMessages();
+
         String address = getAddressForNode(nodeName);
+
+
         if (address == null) {
             return false;
         }
@@ -729,15 +892,20 @@ public class Node implements NodeInterface {
         return returnedName.value.equals(nodeName);
     }
 
+
+
     public void pushRelay(String nodeName) {
         relayStack.push(nodeName);
     }
+
 
     public void popRelay() {
         if (!relayStack.isEmpty()) {
             relayStack.pop();
         }
     }
+
+
 
     @Override
     public boolean exists(String key) throws Exception {
@@ -760,6 +928,8 @@ public class Node implements NodeInterface {
 
         return false;
     }
+
+
 
     @Override
     public String read(String key) throws Exception {
@@ -787,6 +957,7 @@ public class Node implements NodeInterface {
         return null;
     }
 
+
     @Override
     public boolean write(String key, String value) throws Exception {
         String txid = nextTxID();
@@ -803,14 +974,20 @@ public class Node implements NodeInterface {
             }
         }
 
+
         return success;
+
     }
+
+
+
 
     @Override
     public boolean CAS(String key, String currentValue, String newValue) throws Exception {
         String txid = nextTxID();
         String request = txid + " C " + CRNUtils.encodeString(key)
                 + CRNUtils.encodeString(currentValue) + CRNUtils.encodeString(newValue);
+
 
         for (String node : getCandidateNodesForKey(key, 3)) {
             String response = sendRequestToNode(request, node, getAddressForNode(node));
